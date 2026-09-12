@@ -1,0 +1,12 @@
+services:
+  cli:
+    build: .
+    image: context-cli
+    stdin_open: true
+    tty: true
+    restart: "no"
+    volumes:
+      - context-data:/data
+
+volumes:
+  context-data:
