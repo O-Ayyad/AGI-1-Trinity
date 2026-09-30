@@ -5,6 +5,11 @@ services:
     stdin_open: true
     tty: true
     restart: "no"
+    environment:
+      CLAUDE_BACKEND: ${CLAUDE_BACKEND:-api}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:-}
+      CLAUDE_MODEL: ${CLAUDE_MODEL:-claude-opus-5}
     volumes:
       - context-data:/data
 
