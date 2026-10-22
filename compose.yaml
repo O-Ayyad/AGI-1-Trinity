@@ -10,8 +10,11 @@ services:
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:-}
       CLAUDE_MODEL: ${CLAUDE_MODEL:-claude-opus-5}
+      TRINITY_AGENT: ${TRINITY_AGENT:-coder}
     volumes:
       - context-data:/data
+      # The Coder Agent can only touch files in here.
+      - ./workspace:/workspace
 
 volumes:
   context-data:

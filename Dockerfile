@@ -1,7 +1,7 @@
 FROM python:3.12-slim
 
 WORKDIR /app
-RUN pip install --no-cache-dir anthropic
+RUN pip install --no-cache-dir anthropic mcp
 
 # Claude Code CLI for the "subscription" backend.
 RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates \
@@ -9,8 +9,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certifi
     && curl -fsSL https://claude.ai/install.sh | bash
 ENV PATH="/root/.local/bin:${PATH}"
 COPY cli.py main.py ./
+COPY agents/ ./agents/
 
 ENV CONTEXT_DB=/data/context.db
+ENV CODER_WORKDIR=/workspace
 VOLUME ["/data"]
 
 ENTRYPOINT ["python", "-u", "main.py"]
