@@ -1,7 +1,7 @@
 import unittest
+from unittest import mock
 
-from agents.tester_agent import TesterAgent, TesterAgentInput
-
+from agents.tester_agent import TesterAgent, TesterAgentInput, TesterError
 
 class TesterAgentTests(unittest.TestCase):
     def test_documentation_output_passes_when_requirements_are_present(self):
@@ -56,6 +56,64 @@ class TesterAgentTests(unittest.TestCase):
 
         self.assertEqual(result.status, "FAIL")
         self.assertIn("Retry limit reached", result.feedback)
+
+    def test_orchestrator_adapter_returns_ai_result(self):
+            tester = TesterAgent(backend="api")
+            response = (
+                '{"test_result": true, '
+                '"test_feedback": "All requirements passed."}'
+            )
+
+            with mock.patch.object(
+                tester, "_run_api", return_value=response
+            ) as run_api:
+                result = tester(
+                    {
+                        "original_task": "Create a greeting function.",
+                        "plan": "Implement and verify the function.",
+                        "code": "def greet(): return 'hello'",
+                    }
+                )
+
+            self.assertEqual(
+                result,
+                {
+                    "test_result": True,
+                    "test_feedback": "All requirements passed.",
+                },
+            )
+
+            prompt = run_api.call_args.args[0]
+            self.assertIn("Create a greeting function.", prompt)
+            self.assertIn("Implement and verify the function.", prompt)
+            self.assertIn("def greet()", prompt)
+
+    def test_orchestrator_adapter_rejects_invalid_ai_response(self):
+        tester = TesterAgent(backend="api")
+
+        with mock.patch.object(tester, "_run_api", return_value="PASS"):
+            with self.assertRaises(TesterError):
+                tester(
+                    {
+                        "original_task": "Complete the task.",
+                        "code": "solution",
+                    }
+                )
+
+    def test_orchestrator_adapter_fails_empty_output_without_ai(self):
+        tester = TesterAgent(backend="api")
+
+        with mock.patch.object(tester, "_run_api") as run_api:
+            result = tester(
+                {
+                    "original_task": "Complete the task.",
+                    "code": "",
+                }
+            )
+
+        self.assertFalse(result["test_result"])
+        self.assertIn("did not produce", result["test_feedback"])
+        run_api.assert_not_called()
 
 
 if __name__ == "__main__":
