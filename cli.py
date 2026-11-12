@@ -6,6 +6,8 @@ import sys
 from datetime import datetime, timezone
 
 BACKENDS = ("api", "subscription")
+AGENTS = ("coder", "ack")
+DEFAULT_AGENT = os.environ.get("TRINITY_AGENT", "coder")
 DEFAULT_BACKEND = os.environ.get("CLAUDE_BACKEND", "api")
 DEFAULT_DB = os.environ.get("CONTEXT_DB", "/data/context.db")
 MODEL = os.environ.get("CLAUDE_MODEL", "claude-opus-5")
@@ -67,24 +69,27 @@ def connect(db_path):
         )
         """
     )
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(prompts)")}
+    if "response" not in columns:
+        conn.execute("ALTER TABLE prompts ADD COLUMN response TEXT")
     conn.commit()
     return conn
 
 
 def fetch_context(conn, limit):
     if limit is None:
-        cur = conn.execute("SELECT id, body, created_at FROM prompts ORDER BY id")
+        cur = conn.execute("SELECT id, body, created_at, response FROM prompts ORDER BY id")
         return cur.fetchall()
     cur = conn.execute(
-        "SELECT id, body, created_at FROM prompts ORDER BY id DESC LIMIT ?", (limit,)
+        "SELECT id, body, created_at, response FROM prompts ORDER BY id DESC LIMIT ?", (limit,)
     )
     return list(reversed(cur.fetchall()))
 
 
-def store(conn, body):
+def store(conn, body, response=None):
     conn.execute(
-        "INSERT INTO prompts (body, created_at) VALUES (?, ?)",
-        (body, datetime.now(timezone.utc).isoformat(timespec="seconds")),
+        "INSERT INTO prompts (body, created_at, response) VALUES (?, ?, ?)",
+        (body, datetime.now(timezone.utc).isoformat(timespec="seconds"), response),
     )
     conn.commit()
 
@@ -93,17 +98,37 @@ def print_rows(rows, header):
     print(f"\n{header}:")
     if not rows:
         print("  (empty)")
-    for row_id, body, created_at in rows:
+    for row_id, body, created_at, _response in rows:
         print(f"  [{row_id}] {created_at}  {body}")
 
 
-def handle(conn, body, limit, backend):
-    print_rows(fetch_context(conn, limit), "context")
-    print(f"\n{claude_response(body, backend)}\n")
-    store(conn, body)
+def coder_response(body, rows, backend):
+    """Planner and Tester bypassed: the prompt and past interactions go straight to the Coder Agent."""
+    from agents.coder_agent import CoderAgent, Interaction, plan_from_request
+
+    context = [Interaction(prompt, response) for _id, prompt, _created, response in rows]
+    output = CoderAgent(backend=backend).generate_solution(plan_from_request(body, context))
+    changed = "\n".join(f"  {path}" for path in output.files) or "  (none)"
+    return f"{output.summary}\n\nfiles changed:\n{changed}"
 
 
-def repl(conn, limit, backend):
+def handle(conn, body, limit, backend, agent):
+    rows = fetch_context(conn, limit)
+    print_rows(rows, "context")
+    try:
+        if agent == "coder":
+            response = coder_response(body, rows, backend)
+        else:
+            response = claude_response(body, backend)
+    except Exception as exc:
+        print(f"\nerror: {exc}\n", file=sys.stderr)
+        store(conn, body)
+        return
+    print(f"\n{response}\n")
+    store(conn, body, response)
+
+
+def repl(conn, limit, backend, agent):
     print("Type a prompt and press enter. Ctrl-D or exit to quit.")
     while True:
         try:
@@ -115,7 +140,7 @@ def repl(conn, limit, backend):
             return
         if not line:
             continue
-        handle(conn, line, limit, backend)
+        handle(conn, line, limit, backend, agent)
 
 
 def main():
@@ -134,11 +159,20 @@ def main():
         help="api: Claude API with ANTHROPIC_API_KEY; subscription: Claude Code CLI "
         f"with your Claude login (default: {DEFAULT_BACKEND})",
     )
+    parser.add_argument(
+        "--agent",
+        choices=AGENTS,
+        default=DEFAULT_AGENT,
+        help="coder: Coder Agent with file tools, planner and tester bypassed; "
+        f"ack: acknowledge the prompt only (default: {DEFAULT_AGENT})",
+    )
     parser.add_argument("--history", action="store_true", help="print every stored prompt and exit")
     parser.add_argument("--reset", action="store_true", help="delete all stored prompts and exit")
     args = parser.parse_args()
     if args.backend not in BACKENDS:
         parser.error(f"CLAUDE_BACKEND must be one of {', '.join(BACKENDS)}, got {args.backend!r}")
+    if args.agent not in AGENTS:
+        parser.error(f"TRINITY_AGENT must be one of {', '.join(AGENTS)}, got {args.agent!r}")
 
     conn = connect(args.db)
     try:
@@ -159,14 +193,14 @@ def run(conn, args):
         return
 
     if args.prompt:
-        handle(conn, " ".join(args.prompt), args.limit, args.backend)
+        handle(conn, " ".join(args.prompt), args.limit, args.backend, args.agent)
     elif sys.stdin.isatty():
-        repl(conn, args.limit, args.backend)
+        repl(conn, args.limit, args.backend, args.agent)
     else:
         for line in sys.stdin:
             line = line.strip()
             if line:
-                handle(conn, line, args.limit, args.backend)
+                handle(conn, line, args.limit, args.backend, args.agent)
 
 
 if __name__ == "__main__":
