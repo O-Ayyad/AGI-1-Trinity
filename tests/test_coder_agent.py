@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
+from contextlib import ExitStack
 
 from agents.coder_agent import CoderAgent, CoderError, Interaction, Output, plan_from_request
 from agents.tool_layer import ToolError, ToolLayer
@@ -58,7 +59,12 @@ class ToolLayerTests(unittest.TestCase):
     def test_symlink_escape_is_refused(self):
         outside = tempfile.TemporaryDirectory()
         self.addCleanup(outside.cleanup)
-        os.symlink(outside.name, Path(self.tmp.name) / "link")
+        try:
+            os.symlink(outside.name, Path(self.tmp.name)/"link")
+        except OSError as error:
+            if getattr(error, "winerror", None)==1314:
+                self.skipTest("Windows requires permission to create symlinks.")
+            raise
         with self.assertRaises(ToolError):
             self.layer.write_file("link/evil.txt", "x")
         self.assertEqual(os.listdir(outside.name), [])
@@ -176,9 +182,9 @@ class CliIntegrationTests(unittest.TestCase):
     def test_coder_mode_uses_and_stores_past_interactions(self):
         import cli
 
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory() as tmp, ExitStack() as cleanup:
             conn = cli.connect(os.path.join(tmp, "context.db"))
-            self.addCleanup(conn.close)
+            cleanup.callback(conn.close)
             cli.store(conn, "make add.py", "Created add.py.")
             agent_in_tmp = functools.partial(CoderAgent, workdir=tmp)
             patch, create = fake_client(reply("end_turn", text("Added tests.")))
@@ -195,7 +201,7 @@ class CliIntegrationTests(unittest.TestCase):
     def test_old_databases_gain_a_response_column(self):
         import cli
 
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory() as tmp, ExitStack() as cleanup:
             path = os.path.join(tmp, "old.db")
             old = sqlite3.connect(path)
             old.execute("CREATE TABLE prompts (id INTEGER PRIMARY KEY AUTOINCREMENT, body TEXT NOT NULL, created_at TEXT NOT NULL)")
@@ -203,15 +209,15 @@ class CliIntegrationTests(unittest.TestCase):
             old.commit()
             old.close()
             conn = cli.connect(path)
-            self.addCleanup(conn.close)
+            cleanup.callback(conn.close)
             self.assertEqual(cli.fetch_context(conn, None), [(1, "hi", "now", None)])
 
     def test_failed_call_still_stores_prompt(self):
         import cli
 
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory() as tmp, ExitStack() as cleanup:
             conn = cli.connect(os.path.join(tmp, "context.db"))
-            self.addCleanup(conn.close)
+            cleanup.callback(conn.close)
             with mock.patch("cli.coder_response", side_effect=RuntimeError("no key")), mock.patch(
                 "builtins.print"
             ):

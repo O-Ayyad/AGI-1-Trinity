@@ -78,13 +78,6 @@ class TesterAgent:
         plan = str(tester_input.get("plan", ""))
         coder_output = str(tester_input.get("code", ""))
         retry_count = int(tester_input.get("retry_count", 0))
-        retry_limit = int(tester_input.get("retry_limit", self.max_retries))
-
-        if retry_count >= retry_limit:
-            return {
-                "test_result": False,
-                "test_feedback": "Retry limit reached. The workflow should stop.",
-            }
 
         if not coder_output.strip():
             return {

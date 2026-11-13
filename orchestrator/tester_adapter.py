@@ -1,5 +1,10 @@
 def prepare_tester_input(state):
-    return {"original_task": state["original_task"], "code": state["code"]}
+    return {"original_task": state["original_task"],
+            "plan": state["plan"],
+            "code": state["code"],
+            "retry_count": state["retry_count"],
+            "retry_limit": state["retry_limit"],
+            }
 
 def run_tester(state, tester_agent):
     tester_input=prepare_tester_input(state)

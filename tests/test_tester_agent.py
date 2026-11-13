@@ -116,5 +116,23 @@ class TesterAgentTests(unittest.TestCase):
         run_api.assert_not_called()
 
 
+    def test_final_retry_is_still_evaluated(self):
+        tester= TesterAgent(backend="api")
+        response='{"test_result": true, "test_feedback": "Passed."}'
+
+        with mock.patch.object(
+            tester, "_run_api", return_value=response
+        ) as run_api:
+            result = tester({
+            "original_task": "Create a greeting.",
+            "plan": "Return hello.",
+            "code": "def greet(): return 'hello'",
+            "retry_count": 3,
+            "retry_limit": 3,
+        })
+
+        self.assertTrue(result["test_result"])
+        run_api.assert_called_once()
+
 if __name__ == "__main__":
     unittest.main()
