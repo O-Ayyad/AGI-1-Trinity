@@ -15,11 +15,26 @@ def build_orchestrator(planner_agent,coder_agent, tester_agent):
 
     """ The agents are provided as functions so they can be replaced without changing the graph."""
     def planner_node(state):
-        return run_planner(state, planner_agent)
+        print("\n[Planner] Creating the task plan...", flush=True)
+        result=run_planner(state,planner_agent)
+        print(result["plan"], flush=True)
+        return result
     def coder_node(state):
-        return run_coder(state, coder_agent)
+        attempt=state["retry_count"]+1
+        print(f"\n[Coder] Working on attempt {attempt}...", flush=True)
+        if state["retry_count"] > 0:
+            print(
+                f"Revision feedback: {state['test_feedback']}",
+                flush=True,
+            )
+        return run_coder(state,coder_agent)
     def tester_node(state):
-        return run_tester(state,tester_agent)
+        print("\n[Tester] Evaluating the solution...", flush=True)
+        result= run_tester(state, tester_agent)
+        status= "PASS" if result["test_result"] else "FAIL"
+        print(f"[Tester] {status}", flush=True)
+        print(result["test_feedback"], flush=True)
+        return result
 
     workflow=StateGraph(OrchestratorState)
     workflow.add_node("finalize", finalize_node)
