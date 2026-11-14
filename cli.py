@@ -6,7 +6,7 @@ import sys
 from datetime import datetime, timezone
 
 BACKENDS = ("api", "subscription")
-AGENTS = ("coder", "ack")
+AGENTS = ("workflow", "coder", "ack")
 DEFAULT_AGENT = os.environ.get("TRINITY_AGENT", "coder")
 DEFAULT_BACKEND = os.environ.get("CLAUDE_BACKEND", "api")
 DEFAULT_DB = os.environ.get("CONTEXT_DB", "/data/context.db")
@@ -111,15 +111,46 @@ def coder_response(body, rows, backend):
     changed = "\n".join(f"  {path}" for path in output.files) or "  (none)"
     return f"{output.summary}\n\nfiles changed:\n{changed}"
 
+def workflow_response(body, backend):
+    from planner import planner_agent
+    from agents.coder_agent import CoderAgent
+    from agents.tester_agent import TesterAgent
+    from orchestrator.graph import build_orchestrator
+
+    workdir= os.path.abspath(
+        os.environ.get("CODER_WORKDIR", "generated")
+    )
+    os.makedirs(workdir, exist_ok=True)
+
+    app= build_orchestrator(
+        planner_agent,
+        CoderAgent(workdir=workdir, backend=backend),
+        TesterAgent(backend=backend),
+    )
+    initial_state= {
+        "original_task": body,
+        "plan": "",
+        "code": "",
+        "test_result": False,
+        "test_feedback": "",
+        "retry_count": 0,
+        "retry_limit": 2,
+        "final_output": "",
+    }
+
+    result =app.invoke(initial_state)
+    return result["final_output"]
 
 def handle(conn, body, limit, backend, agent):
     rows = fetch_context(conn, limit)
     print_rows(rows, "context")
     try:
-        if agent == "coder":
+        if agent == "workflow":
+            response = workflow_response(body, backend)
+        elif agent == "coder":
             response = coder_response(body, rows, backend)
         else:
-            response = claude_response(body, backend)
+            response= claude_response(body, backend)
     except Exception as exc:
         print(f"\nerror: {exc}\n", file=sys.stderr)
         store(conn, body)
@@ -163,8 +194,9 @@ def main():
         "--agent",
         choices=AGENTS,
         default=DEFAULT_AGENT,
-        help="coder: Coder Agent with file tools, planner and tester bypassed; "
-        f"ack: acknowledge the prompt only (default: {DEFAULT_AGENT})",
+        help="workflow: run Planner, Coder, and Teser; "
+            "coder: run the Coder alone; "
+             f"ack: acknowledge the prompt only (default: {DEFAULT_AGENT})",
     )
     parser.add_argument("--history", action="store_true", help="print every stored prompt and exit")
     parser.add_argument("--reset", action="store_true", help="delete all stored prompts and exit")

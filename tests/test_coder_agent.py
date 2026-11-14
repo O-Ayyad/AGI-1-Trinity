@@ -177,7 +177,22 @@ class CoderAgentTests(unittest.TestCase):
             haiku.generate_solution(plan_from_request("x"))
         self.assertNotIn("fallbacks", create.call_args.kwargs)
 
+    def test_generated_cache_files_are_excluded_from_output(self):
+        def generate_files(*args):
+            self.agent.tools.write_file("greeting.py", "x=1\n")
+            self.agent.tools.write_file(
+                "__pycache__/greeting.cpython-313.pyc", "cache data"
+            )
+            self.agent.tools.write_file("old_cache.pyo", "cache data")
+            return "Created greeting.py"
 
+        with mock.patch.object(
+            self.agent, "_run_api", side_effect=generate_files
+        ):
+            output=self.agent.generate_solution(
+                plan_from_request("Create greeting.py")
+            )
+        self.assertEqual(output.files, {"greeting.py": "x=1\n"})
 class CliIntegrationTests(unittest.TestCase):
     def test_coder_mode_uses_and_stores_past_interactions(self):
         import cli
@@ -225,6 +240,21 @@ class CliIntegrationTests(unittest.TestCase):
             [(_id, body, _created, response)] = cli.fetch_context(conn, None)
             self.assertEqual((body, response), ("hello", None))
 
+    def test_workflow_mode_calls_workflow_and_stores_result(self):
+        import cli
+
+        conn= cli.connect(":memory:")
+        self.addCleanup(conn.close)
+
+        with mock.patch(
+            "cli.workflow_response", return_value="Workflow completed."
+        )as workflow, mock.patch("builtins.print"):
+            cli.handle(conn, "Create a greeting.", 10, "api", "workflow")
+
+        workflow.assert_called_once_with("Create a greeting.", "api")
+        rows= cli.fetch_context(conn, None)
+        self.assertEqual(rows[-1][1], "Create a greeting.")
+        self.assertEqual(rows[-1][3], "Workflow completed.")
 
 class McpServerTests(unittest.TestCase):
     def test_server_exposes_the_four_tools(self):

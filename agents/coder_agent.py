@@ -121,7 +121,8 @@ class CoderAgent:
         else:
             summary = self._run_api(plan.context, message)
         after = self.tools.snapshot()
-        changed = sorted(path for path, mtime in after.items() if before.get(path) != mtime)
+        changed = sorted(path for path, mtime in after.items() if before.get(path) != mtime
+                         and "__pycache__" not in Path(path).parts and Path(path).suffix.lower() not in {".pyc", ".pyo"})
         files = {}
         for path in changed:
             try:

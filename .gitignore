@@ -32,3 +32,5 @@ env/
 
 # Coder Agent output
 workspace/
+
+generated/
