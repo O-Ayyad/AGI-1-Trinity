@@ -11,11 +11,10 @@ def _on_sigterm(signum, frame):
 def main():
     signal.signal(signal.SIGTERM, _on_sigterm)
     try:
-        cli.main()
+        return cli.main()
     except KeyboardInterrupt:
         print("\nClosed.")
         return 0
-    return 0
 
 
 if __name__ == "__main__":

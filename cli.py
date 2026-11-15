@@ -151,9 +151,10 @@ def handle(conn, body, limit, backend, agent):
     except Exception as exc:
         print(f"\nerror: {exc}\n", file=sys.stderr)
         store(conn, body)
-        return
+        return None
     print(f"\n{response}\n")
     store(conn, body, response)
+    return response
 
 
 def repl(conn, limit, backend, agent):
@@ -185,7 +186,8 @@ def main():
         choices=BACKENDS,
         default=DEFAULT_BACKEND,
         help="api: Claude API with ANTHROPIC_API_KEY; subscription: Claude Code CLI "
-        f"with your Claude login (default: {DEFAULT_BACKEND})",
+        "with your Claude login; local: OpenAI-compatible server at LOCAL_BASE_URL "
+        f"(default: {DEFAULT_BACKEND})",
     )
     parser.add_argument(
         "--agent",
@@ -195,6 +197,8 @@ def main():
         "coder: run the Coder alone; "
         f"ack: acknowledge the prompt only (default: {DEFAULT_AGENT})",
     )
+    parser.add_argument("--prompt-file", help="read the prompt from this UTF-8 file")
+    parser.add_argument("--result-file", help="write the final response to this file")
     parser.add_argument("--history", action="store_true", help="print every stored prompt and exit")
     parser.add_argument("--reset", action="store_true", help="delete all stored prompts and exit")
     args = parser.parse_args()
@@ -203,9 +207,15 @@ def main():
     if args.agent not in AGENTS:
         parser.error(f"TRINITY_AGENT must be one of {', '.join(AGENTS)}, got {args.agent!r}")
 
+    if args.prompt_file:
+        with open(args.prompt_file, encoding="utf-8") as prompt_file:
+            args.prompt = [prompt_file.read().strip()]
+        if not args.prompt[0]:
+            parser.error(f"{args.prompt_file} is empty")
+
     conn = connect(args.db)
     try:
-        run(conn, args)
+        return run(conn, args)
     finally:
         conn.close()
 
@@ -215,22 +225,32 @@ def run(conn, args):
         conn.execute("DELETE FROM prompts")
         conn.commit()
         print(f"Cleared all prompts from {args.db}")
-        return
+        return 0
 
     if args.history:
         print_rows(fetch_context(conn, None), "history")
-        return
+        return 0
 
     if args.prompt:
-        handle(conn, " ".join(args.prompt), args.limit, args.backend, args.agent)
-    elif sys.stdin.isatty():
+        response = handle(conn, " ".join(args.prompt), args.limit, args.backend, args.agent)
+        if response is None:
+            return 1
+        if args.result_file:
+            with open(args.result_file, "w", encoding="utf-8") as result_file:
+                result_file.write(response)
+        return 0
+
+    if sys.stdin.isatty():
         repl(conn, args.limit, args.backend, args.agent)
-    else:
-        for line in sys.stdin:
-            line = line.strip()
-            if line:
-                handle(conn, line, args.limit, args.backend, args.agent)
+        return 0
+
+    status = 0
+    for line in sys.stdin:
+        line = line.strip()
+        if line and handle(conn, line, args.limit, args.backend, args.agent) is None:
+            status = 1
+    return status
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

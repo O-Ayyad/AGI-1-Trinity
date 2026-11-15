@@ -1,5 +1,9 @@
 import os
 
+from agents.env import load_env
+
+load_env()
+
 BACKENDS = ("api", "subscription", "local")
 DEFAULT_MODEL = os.environ.get("CLAUDE_MODEL", "claude-opus-5-5")
 DEFAULT_WORKDIR = os.environ.get("CODER_WORKDIR", "workspace")
