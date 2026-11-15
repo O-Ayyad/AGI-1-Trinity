@@ -1,9 +1,16 @@
-from .coder_interface import prepare_coder_input
+def prepare_coder_input(state):
+    if state["retry_count"] == 0:
+        return {"original_task": state["original_task"], "plan": state["plan"]}
+    return {
+        "original_task": state["original_task"],
+        "plan": state["plan"],
+        "code": state["code"],
+        "test_feedback": state["test_feedback"],
+    }
+
 
 def run_coder(state, coder_agent):
-    coder_input= prepare_coder_input(state)
-    response=coder_agent(coder_input)
-    if(isinstance(response,dict) and "code" in response and isinstance(response["code"],str)):
+    response = coder_agent(prepare_coder_input(state))
+    if isinstance(response, dict) and isinstance(response.get("code"), str):
         return {"code": response["code"]}
-    else:
-       raise ValueError ("Invalid Coder response")
+    raise ValueError("Invalid Coder response")

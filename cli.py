@@ -1,16 +1,19 @@
 import argparse
+import functools
 import os
 import sqlite3
 import subprocess
 import sys
 from datetime import datetime, timezone
 
-BACKENDS = ("api", "subscription")
+from agents import local_client
+from agents.config import BACKENDS, DEFAULT_MODEL
+
 AGENTS = ("workflow", "coder", "ack")
-DEFAULT_AGENT = os.environ.get("TRINITY_AGENT", "coder")
+DEFAULT_AGENT = os.environ.get("TRINITY_AGENT", "workflow")
 DEFAULT_BACKEND = os.environ.get("CLAUDE_BACKEND", "api")
-DEFAULT_DB = os.environ.get("CONTEXT_DB", "/data/context.db")
-MODEL = os.environ.get("CLAUDE_MODEL", "claude-opus-5")
+DEFAULT_DB = os.environ.get("CONTEXT_DB", "data/context.db")
+MODEL = DEFAULT_MODEL
 SYSTEM_PROMPT = (
     "You are Claude, attached to a CLI that only records prompts as context. "
     "You never fulfil, plan, or answer the user's request. Reply with a single short "
@@ -21,6 +24,8 @@ SYSTEM_PROMPT = (
 
 def claude_response(body, backend):
     """Ask Claude to acknowledge the prompt and return what it says."""
+    if backend == "local":
+        return local_client.complete(SYSTEM_PROMPT, body, max_tokens=1024)
     if backend == "subscription":
         return subscription_response(body)
     return api_response(body)
@@ -37,9 +42,7 @@ def api_response(body):
         system=SYSTEM_PROMPT,
         messages=[{"role": "user", "content": body}],
     )
-    return " ".join(
-        block.text.strip() for block in message.content if block.type == "text"
-    ).strip()
+    return " ".join(block.text.strip() for block in message.content if block.type == "text").strip()
 
 
 def subscription_response(body):
@@ -60,15 +63,13 @@ def connect(db_path):
     if parent:
         os.makedirs(parent, exist_ok=True)
     conn = sqlite3.connect(db_path)
-    conn.execute(
-        """
+    conn.execute("""
         CREATE TABLE IF NOT EXISTS prompts (
             id         INTEGER PRIMARY KEY AUTOINCREMENT,
             body       TEXT NOT NULL,
             created_at TEXT NOT NULL
         )
-        """
-    )
+        """)
     columns = {row[1] for row in conn.execute("PRAGMA table_info(prompts)")}
     if "response" not in columns:
         conn.execute("ALTER TABLE prompts ADD COLUMN response TEXT")
@@ -111,23 +112,19 @@ def coder_response(body, rows, backend):
     changed = "\n".join(f"  {path}" for path in output.files) or "  (none)"
     return f"{output.summary}\n\nfiles changed:\n{changed}"
 
+
 def workflow_response(body, backend):
-    from planner import planner_agent
     from agents.coder_agent import CoderAgent
+    from agents.planner_agent import planner_agent
     from agents.tester_agent import TesterAgent
     from orchestrator.graph import build_orchestrator
 
-    workdir= os.path.abspath(
-        os.environ.get("CODER_WORKDIR", "generated")
-    )
-    os.makedirs(workdir, exist_ok=True)
-
-    app= build_orchestrator(
-        planner_agent,
-        CoderAgent(workdir=workdir, backend=backend),
+    app = build_orchestrator(
+        functools.partial(planner_agent, backend=backend),
+        CoderAgent(backend=backend),
         TesterAgent(backend=backend),
     )
-    initial_state= {
+    initial_state = {
         "original_task": body,
         "plan": "",
         "code": "",
@@ -138,8 +135,8 @@ def workflow_response(body, backend):
         "final_output": "",
     }
 
-    result =app.invoke(initial_state)
-    return result["final_output"]
+    return app.invoke(initial_state)["final_output"]
+
 
 def handle(conn, body, limit, backend, agent):
     rows = fetch_context(conn, limit)
@@ -150,7 +147,7 @@ def handle(conn, body, limit, backend, agent):
         elif agent == "coder":
             response = coder_response(body, rows, backend)
         else:
-            response= claude_response(body, backend)
+            response = claude_response(body, backend)
     except Exception as exc:
         print(f"\nerror: {exc}\n", file=sys.stderr)
         store(conn, body)
@@ -176,7 +173,7 @@ def repl(conn, limit, backend, agent):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Store prompts in SQLite and print the previous ones as context."
+        description="Trinity: run prompts through the Planner, Coder and Tester agents, storing every prompt in SQLite."
     )
     parser.add_argument("prompt", nargs="*", help="prompt text; omit for interactive mode")
     parser.add_argument("--db", default=DEFAULT_DB, help=f"SQLite path (default: {DEFAULT_DB})")
@@ -194,9 +191,9 @@ def main():
         "--agent",
         choices=AGENTS,
         default=DEFAULT_AGENT,
-        help="workflow: run Planner, Coder, and Teser; "
-            "coder: run the Coder alone; "
-             f"ack: acknowledge the prompt only (default: {DEFAULT_AGENT})",
+        help="workflow: run Planner, Coder, and Tester; "
+        "coder: run the Coder alone; "
+        f"ack: acknowledge the prompt only (default: {DEFAULT_AGENT})",
     )
     parser.add_argument("--history", action="store_true", help="print every stored prompt and exit")
     parser.add_argument("--reset", action="store_true", help="delete all stored prompts and exit")

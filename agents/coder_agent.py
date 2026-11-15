@@ -7,12 +7,11 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from agents import local_client
+from agents.config import BACKENDS, DEFAULT_WORKDIR, default_model
 from agents.tool_layer import TOOL_DEFINITIONS, ToolError, ToolLayer
 
-BACKENDS = ("api", "subscription")
-DEFAULT_MODEL = os.environ.get("CLAUDE_MODEL", "claude-opus-5-5")
 DEFAULT_EFFORT = os.environ.get("CODER_EFFORT", "high")
-DEFAULT_WORKDIR = os.environ.get("CODER_WORKDIR", "/workspace")
 MAX_TOOL_TURNS = int(os.environ.get("CODER_MAX_TURNS", "25"))
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
 TOOL_NAMES = [tool["name"] for tool in TOOL_DEFINITIONS]
@@ -34,8 +33,7 @@ to run it."""
 
 @dataclass(frozen=True)
 class Interaction:
-    #One past prompt response pair from database.
-
+    # One past prompt/response pair from the database.
     prompt: str
     response: str | None = None
 
@@ -65,7 +63,6 @@ class CoderError(RuntimeError):
 
 
 def plan_from_request(request: str, context: list[Interaction] | None = None) -> Plan:
-    # This will not exist after planner agent integration
     return Plan(request=request, steps=[request], context=list(context or []))
 
 
@@ -74,18 +71,17 @@ class CoderAgent:
         self,
         workdir: str | os.PathLike = DEFAULT_WORKDIR,
         backend: str = "api",
-        model: str = DEFAULT_MODEL,
+        model: str | None = None,
         effort: str = DEFAULT_EFFORT,
         max_turns: int = MAX_TOOL_TURNS,
-
     ) -> None:
-        
+
         if backend not in BACKENDS:
             raise ValueError(f"backend must be one of {', '.join(BACKENDS)}, got {backend!r}")
-        
+
         self.tools = ToolLayer(workdir)
         self.backend = backend
-        self.model = model
+        self.model = model or default_model(backend)
         self.effort = effort
         self.max_turns = max_turns
 
@@ -106,8 +102,7 @@ class CoderAgent:
 
     def __call__(self, coder_input: dict) -> dict:
 
-        # Adapter for the orchestrator run_coder takes its coder_input dict and returns {"code": str}
-
+        # Adapter for the orchestrator: takes its coder_input dict and returns {"code": str}
         plan = Plan(request=coder_input["original_task"], steps=[coder_input["plan"]])
         if "test_feedback" in coder_input:
             previous = Output(plan=plan, summary=coder_input.get("code", ""), files={})
@@ -116,13 +111,20 @@ class CoderAgent:
 
     def _run(self, plan: Plan, message: str) -> Output:
         before = self.tools.snapshot()
-        if self.backend == "subscription":
+        if self.backend == "local":
+            summary = self._run_local(plan.context, message)
+        elif self.backend == "subscription":
             summary = self._run_subscription(plan.context, message)
         else:
             summary = self._run_api(plan.context, message)
         after = self.tools.snapshot()
-        changed = sorted(path for path, mtime in after.items() if before.get(path) != mtime
-                         and "__pycache__" not in Path(path).parts and Path(path).suffix.lower() not in {".pyc", ".pyo"})
+        changed = sorted(
+            path
+            for path, mtime in after.items()
+            if before.get(path) != mtime
+            and "__pycache__" not in Path(path).parts
+            and Path(path).suffix.lower() not in {".pyc", ".pyo"}
+        )
         files = {}
         for path in changed:
             try:
@@ -165,12 +167,58 @@ class CoderAgent:
                 if block.type != "tool_use":
                     continue
                 try:
-                    results.append(_tool_result(block.id, self.tools.dispatch(block.name, block.input)))
+                    results.append(
+                        _tool_result(block.id, self.tools.dispatch(block.name, block.input))
+                    )
                 except ToolError as exc:
                     results.append(_tool_result(block.id, str(exc), is_error=True))
             messages.append({"role": "user", "content": results})
 
         raise CoderError(f"Stopped after {self.max_turns} tool turns without finishing.")
+
+    def _run_local(self, context: list[Interaction], message: str) -> str:
+        messages = (
+            [{"role": "system", "content": SYSTEM_PROMPT}]
+            + _history_messages(context)
+            + [{"role": "user", "content": message}]
+        )
+        tools = local_client.openai_tools(TOOL_DEFINITIONS)
+
+        for _ in range(self.max_turns):
+            choice = local_client.chat(messages, self.model, tools=tools, max_tokens=16000)
+            reply = choice["message"]
+            calls = reply.get("tool_calls") or []
+            assistant = {"role": "assistant", "content": reply.get("content") or ""}
+            if calls:
+                assistant["tool_calls"] = calls
+            messages.append(assistant)
+
+            if choice.get("finish_reason") == "length":
+                raise CoderError("Response hit max_tokens before the task finished.")
+            if not calls:
+                return assistant["content"].strip()
+
+            for index, call in enumerate(calls):
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": call.get("id") or f"call_{index}",
+                        "content": self._dispatch_local(call.get("function") or {}),
+                    }
+                )
+
+        raise CoderError(f"Stopped after {self.max_turns} tool turns without finishing.")
+
+    def _dispatch_local(self, function: dict) -> str:
+        arguments = function.get("arguments") or {}
+        try:
+            if isinstance(arguments, str):
+                arguments = json.loads(arguments or "{}")
+            if not isinstance(arguments, dict):
+                raise ToolError("Tool arguments must be a JSON object.")
+            return self.tools.dispatch(function.get("name", ""), arguments)
+        except (ValueError, ToolError) as exc:
+            return str(exc)
 
     def _run_subscription(self, context: list[Interaction], message: str) -> str:
         mcp_config = {
@@ -185,13 +233,19 @@ class CoderAgent:
         allowed = ",".join(f"mcp__coder_tools__{name}" for name in TOOL_NAMES)
         result = subprocess.run(
             [
-                "claude", "-p",
-                "--model", self.model,
-                "--system-prompt", SYSTEM_PROMPT,
-                "--tools", "",
-                "--mcp-config", json.dumps(mcp_config),
+                "claude",
+                "-p",
+                "--model",
+                self.model,
+                "--system-prompt",
+                SYSTEM_PROMPT,
+                "--tools",
+                "",
+                "--mcp-config",
+                json.dumps(mcp_config),
                 "--strict-mcp-config",
-                "--allowedTools", allowed,
+                "--allowedTools",
+                allowed,
             ],
             input=_history_text(context) + message,
             capture_output=True,

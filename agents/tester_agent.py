@@ -8,8 +8,8 @@ from typing import Iterable, Literal
 import json
 import os
 
-BACKENDS = ("api", "subscription")
-DEFAULT_MODEL = os.environ.get("CLAUDE_MODEL", "claude-opus-5-5")
+from agents import local_client
+from agents.config import BACKENDS, default_model
 
 SYSTEM_PROMPT = """\
 You are the Tester Agent in a multi-agent software system. Evaluate the Coder Agent's output
@@ -48,6 +48,7 @@ class TesterAgentInput:
     retry_count: int = 0
     output_type: OutputType = "documentation"
 
+
 class TesterError(RuntimeError):
     """Raised when the AI Tester cannot produce a valid evaluation."""
 
@@ -59,7 +60,7 @@ class TesterAgent:
         self,
         max_retries: int = 3,
         backend: str | None = None,
-        model: str = DEFAULT_MODEL,
+        model: str | None = None,
     ) -> None:
         selected_backend = backend or os.environ.get("CLAUDE_BACKEND", "api")
 
@@ -70,7 +71,7 @@ class TesterAgent:
 
         self.max_retries = max_retries
         self.backend = selected_backend
-        self.model = model
+        self.model = model or default_model(selected_backend)
 
     def __call__(self, tester_input: dict) -> dict:
         """Receive input from the Orchestrator and return the test result."""
@@ -92,7 +93,11 @@ class TesterAgent:
             retry_count=retry_count,
         )
 
-        if self.backend == "subscription":
+        if self.backend == "local":
+            response_text = local_client.complete(
+                SYSTEM_PROMPT, prompt, model=self.model, max_tokens=1024
+            )
+        elif self.backend == "subscription":
             response_text = self._run_subscription(prompt)
         else:
             response_text = self._run_api(prompt)
@@ -137,8 +142,7 @@ class TesterAgent:
 
         if completed.returncode != 0:
             raise TesterError(
-                "Claude CLI failed: "
-                + (completed.stderr.strip() or completed.stdout.strip())
+                "Claude CLI failed: " + (completed.stderr.strip() or completed.stdout.strip())
             )
 
         return completed.stdout.strip()
@@ -226,6 +230,7 @@ class TesterAgent:
             retry_count=agent_input.retry_count,
         )
 
+
 def _evaluation_prompt(
     original_task: str,
     plan: str,
@@ -268,4 +273,3 @@ def _parse_model_response(response_text: str) -> dict:
         "test_result": result["test_result"],
         "test_feedback": result["test_feedback"],
     }
-

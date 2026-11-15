@@ -3,6 +3,7 @@ from unittest import mock
 
 from agents.tester_agent import TesterAgent, TesterAgentInput, TesterError
 
+
 class TesterAgentTests(unittest.TestCase):
     def test_documentation_output_passes_when_requirements_are_present(self):
         tester = TesterAgent()
@@ -58,35 +59,30 @@ class TesterAgentTests(unittest.TestCase):
         self.assertIn("Retry limit reached", result.feedback)
 
     def test_orchestrator_adapter_returns_ai_result(self):
-            tester = TesterAgent(backend="api")
-            response = (
-                '{"test_result": true, '
-                '"test_feedback": "All requirements passed."}'
-            )
+        tester = TesterAgent(backend="api")
+        response = '{"test_result": true, ' '"test_feedback": "All requirements passed."}'
 
-            with mock.patch.object(
-                tester, "_run_api", return_value=response
-            ) as run_api:
-                result = tester(
-                    {
-                        "original_task": "Create a greeting function.",
-                        "plan": "Implement and verify the function.",
-                        "code": "def greet(): return 'hello'",
-                    }
-                )
-
-            self.assertEqual(
-                result,
+        with mock.patch.object(tester, "_run_api", return_value=response) as run_api:
+            result = tester(
                 {
-                    "test_result": True,
-                    "test_feedback": "All requirements passed.",
-                },
+                    "original_task": "Create a greeting function.",
+                    "plan": "Implement and verify the function.",
+                    "code": "def greet(): return 'hello'",
+                }
             )
 
-            prompt = run_api.call_args.args[0]
-            self.assertIn("Create a greeting function.", prompt)
-            self.assertIn("Implement and verify the function.", prompt)
-            self.assertIn("def greet()", prompt)
+        self.assertEqual(
+            result,
+            {
+                "test_result": True,
+                "test_feedback": "All requirements passed.",
+            },
+        )
+
+        prompt = run_api.call_args.args[0]
+        self.assertIn("Create a greeting function.", prompt)
+        self.assertIn("Implement and verify the function.", prompt)
+        self.assertIn("def greet()", prompt)
 
     def test_orchestrator_adapter_rejects_invalid_ai_response(self):
         tester = TesterAgent(backend="api")
@@ -115,24 +111,24 @@ class TesterAgentTests(unittest.TestCase):
         self.assertIn("did not produce", result["test_feedback"])
         run_api.assert_not_called()
 
-
     def test_final_retry_is_still_evaluated(self):
-        tester= TesterAgent(backend="api")
-        response='{"test_result": true, "test_feedback": "Passed."}'
+        tester = TesterAgent(backend="api")
+        response = '{"test_result": true, "test_feedback": "Passed."}'
 
-        with mock.patch.object(
-            tester, "_run_api", return_value=response
-        ) as run_api:
-            result = tester({
-            "original_task": "Create a greeting.",
-            "plan": "Return hello.",
-            "code": "def greet(): return 'hello'",
-            "retry_count": 3,
-            "retry_limit": 3,
-        })
+        with mock.patch.object(tester, "_run_api", return_value=response) as run_api:
+            result = tester(
+                {
+                    "original_task": "Create a greeting.",
+                    "plan": "Return hello.",
+                    "code": "def greet(): return 'hello'",
+                    "retry_count": 3,
+                    "retry_limit": 3,
+                }
+            )
 
         self.assertTrue(result["test_result"])
         run_api.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()

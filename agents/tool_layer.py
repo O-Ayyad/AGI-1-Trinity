@@ -34,7 +34,7 @@ def _truncate(text: str) -> str:
 
 
 class ToolLayer:
-    #only allow files in workdir to be manipulated. Reject all other files.
+    # Only files inside the working directory can be manipulated; all other paths are rejected.
 
     def __init__(self, workdir: str | os.PathLike) -> None:
         self.workdir = Path(workdir).resolve()
@@ -81,7 +81,11 @@ class ToolLayer:
 
     def execute_code(self, code: str, timeout: int = DEFAULT_TIMEOUT) -> ExecutionResult:
         """Run Python source with the working directory as cwd and a minimal environment."""
-        env = {"PATH": os.environ.get("PATH", ""), "HOME": str(self.workdir), "PYTHONIOENCODING": "utf-8"}
+        env = {
+            "PATH": os.environ.get("PATH", ""),
+            "HOME": str(self.workdir),
+            "PYTHONIOENCODING": "utf-8",
+        }
         try:
             completed = subprocess.run(
                 # -I isolated mode ignores python env vars and the user site dir
@@ -100,10 +104,12 @@ class ToolLayer:
                 stderr=_truncate(_as_text(exc.stderr)),
                 timed_out=True,
             )
-        return ExecutionResult(completed.returncode, _truncate(completed.stdout), _truncate(completed.stderr))
+        return ExecutionResult(
+            completed.returncode, _truncate(completed.stdout), _truncate(completed.stderr)
+        )
 
     def snapshot(self) -> dict[str, int]:
-        #relative path -> mtime_ns for every file"""
+        # Relative path -> mtime_ns for every file.
         return {
             self._relative(p): p.stat().st_mtime_ns
             for p in self.workdir.rglob("*")
@@ -111,14 +117,16 @@ class ToolLayer:
         }
 
     def dispatch(self, name: str, tool_input: dict) -> str:
-        #run a tool by name with model supplied input
+        # Run a tool by name with model-supplied input.
         try:
             if name == "read_file":
                 return self.read_file(tool_input["path"])
             if name == "write_file":
                 return self.write_file(tool_input["path"], tool_input["content"])
             if name == "edit_file":
-                return self.edit_file(tool_input["path"], tool_input["old_text"], tool_input["new_text"])
+                return self.edit_file(
+                    tool_input["path"], tool_input["old_text"], tool_input["new_text"]
+                )
             if name == "execute_code":
                 timeout = min(int(tool_input.get("timeout", DEFAULT_TIMEOUT)), 120)
                 return str(self.execute_code(tool_input["code"], timeout))
@@ -166,7 +174,10 @@ TOOL_DEFINITIONS = [
             "type": "object",
             "properties": {
                 "path": {"type": "string", "description": "Relative file path."},
-                "old_text": {"type": "string", "description": "Exact text to replace; must occur once."},
+                "old_text": {
+                    "type": "string",
+                    "description": "Exact text to replace; must occur once.",
+                },
                 "new_text": {"type": "string", "description": "Replacement text."},
             },
             "required": ["path", "old_text", "new_text"],
@@ -184,7 +195,10 @@ TOOL_DEFINITIONS = [
             "type": "object",
             "properties": {
                 "code": {"type": "string", "description": "Python source to run."},
-                "timeout": {"type": "integer", "description": "Seconds before the run is stopped (max 120)."},
+                "timeout": {
+                    "type": "integer",
+                    "description": "Seconds before the run is stopped (max 120).",
+                },
             },
             "required": ["code"],
             "additionalProperties": False,

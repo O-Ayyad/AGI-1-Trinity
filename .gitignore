@@ -30,7 +30,7 @@ env/
 # Logs
 *.log
 
-# Coder Agent output
+# Coder Agent output and prompt history
 workspace/
-
-generated/
+data/
+*.db

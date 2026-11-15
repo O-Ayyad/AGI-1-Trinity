@@ -1,5 +1,5 @@
-#python -m agents.coder_mcp <workdir>
-#tools agent can use to manipulate files
+# python -m agents.coder_mcp <workdir>
+# Tools the Coder Agent can use to manipulate files.
 
 import sys
 

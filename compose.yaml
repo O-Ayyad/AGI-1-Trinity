@@ -1,7 +1,7 @@
 services:
   cli:
     build: .
-    image: context-cli
+    image: trinity-cli
     stdin_open: true
     tty: true
     restart: "no"
@@ -9,8 +9,13 @@ services:
       CLAUDE_BACKEND: ${CLAUDE_BACKEND:-api}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:-}
-      CLAUDE_MODEL: ${CLAUDE_MODEL:-claude-opus-5}
+      CLAUDE_MODEL: ${CLAUDE_MODEL:-claude-opus-5-5}
+      LOCAL_BASE_URL: ${LOCAL_BASE_URL:-http://host.docker.internal:11434/v1}
+      LOCAL_MODEL: ${LOCAL_MODEL:-llama3.1}
+      LOCAL_API_KEY: ${LOCAL_API_KEY:-}
       TRINITY_AGENT: ${TRINITY_AGENT:-workflow}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - context-data:/data
       # The Coder Agent can only touch files in here.

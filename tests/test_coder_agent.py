@@ -28,7 +28,7 @@ def fake_client(*responses):
     queue = list(responses)
 
     def respond(**kwargs):
-        #The agent keeps appending to the same messages list
+        # The agent keeps appending to the same messages list
         create.sent.append(list(kwargs["messages"]))
         return queue.pop(0)
 
@@ -60,9 +60,9 @@ class ToolLayerTests(unittest.TestCase):
         outside = tempfile.TemporaryDirectory()
         self.addCleanup(outside.cleanup)
         try:
-            os.symlink(outside.name, Path(self.tmp.name)/"link")
+            os.symlink(outside.name, Path(self.tmp.name) / "link")
         except OSError as error:
-            if getattr(error, "winerror", None)==1314:
+            if getattr(error, "winerror", None) == 1314:
                 self.skipTest("Windows requires permission to create symlinks.")
             raise
         with self.assertRaises(ToolError):
@@ -102,8 +102,19 @@ class CoderAgentTests(unittest.TestCase):
 
     def test_generate_solution_runs_tools_and_reports_changed_files(self):
         patch, create = fake_client(
-            reply("tool_use", text("Writing it."), tool_use("t1", "write_file", {"path": "hello.py", "content": "print('Hello World')\n"})),
-            reply("tool_use", tool_use("t2", "execute_code", {"code": "import runpy; runpy.run_path('hello.py')"})),
+            reply(
+                "tool_use",
+                text("Writing it."),
+                tool_use(
+                    "t1", "write_file", {"path": "hello.py", "content": "print('Hello World')\n"}
+                ),
+            ),
+            reply(
+                "tool_use",
+                tool_use(
+                    "t2", "execute_code", {"code": "import runpy; runpy.run_path('hello.py')"}
+                ),
+            ),
             reply("end_turn", text("Created hello.py; run it with python hello.py.")),
         )
         history = [Interaction("earlier prompt", "earlier answer")]
@@ -136,7 +147,9 @@ class CoderAgentTests(unittest.TestCase):
 
     def test_revise_solution_sends_feedback_and_previous_output(self):
         plan = plan_from_request("Print Hello World")
-        previous = Output(plan=plan, summary="Printed Goodbye.", files={"hello.py": "print('Goodbye')"})
+        previous = Output(
+            plan=plan, summary="Printed Goodbye.", files={"hello.py": "print('Goodbye')"}
+        )
         patch, create = fake_client(reply("end_turn", text("Fixed.")))
         with patch:
             output = self.agent.revise_solution("Output should be Hello World", previous)
@@ -180,19 +193,15 @@ class CoderAgentTests(unittest.TestCase):
     def test_generated_cache_files_are_excluded_from_output(self):
         def generate_files(*args):
             self.agent.tools.write_file("greeting.py", "x=1\n")
-            self.agent.tools.write_file(
-                "__pycache__/greeting.cpython-313.pyc", "cache data"
-            )
+            self.agent.tools.write_file("__pycache__/greeting.cpython-313.pyc", "cache data")
             self.agent.tools.write_file("old_cache.pyo", "cache data")
             return "Created greeting.py"
 
-        with mock.patch.object(
-            self.agent, "_run_api", side_effect=generate_files
-        ):
-            output=self.agent.generate_solution(
-                plan_from_request("Create greeting.py")
-            )
+        with mock.patch.object(self.agent, "_run_api", side_effect=generate_files):
+            output = self.agent.generate_solution(plan_from_request("Create greeting.py"))
         self.assertEqual(output.files, {"greeting.py": "x=1\n"})
+
+
 class CliIntegrationTests(unittest.TestCase):
     def test_coder_mode_uses_and_stores_past_interactions(self):
         import cli
@@ -203,7 +212,9 @@ class CliIntegrationTests(unittest.TestCase):
             cli.store(conn, "make add.py", "Created add.py.")
             agent_in_tmp = functools.partial(CoderAgent, workdir=tmp)
             patch, create = fake_client(reply("end_turn", text("Added tests.")))
-            with patch, mock.patch("agents.coder_agent.CoderAgent", agent_in_tmp), mock.patch("builtins.print"):
+            with patch, mock.patch("agents.coder_agent.CoderAgent", agent_in_tmp), mock.patch(
+                "builtins.print"
+            ):
                 cli.handle(conn, "now add tests", 10, "api", "coder")
 
             sent = create.sent[0]
@@ -219,7 +230,9 @@ class CliIntegrationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp, ExitStack() as cleanup:
             path = os.path.join(tmp, "old.db")
             old = sqlite3.connect(path)
-            old.execute("CREATE TABLE prompts (id INTEGER PRIMARY KEY AUTOINCREMENT, body TEXT NOT NULL, created_at TEXT NOT NULL)")
+            old.execute(
+                "CREATE TABLE prompts (id INTEGER PRIMARY KEY AUTOINCREMENT, body TEXT NOT NULL, created_at TEXT NOT NULL)"
+            )
             old.execute("INSERT INTO prompts (body, created_at) VALUES ('hi', 'now')")
             old.commit()
             old.close()
@@ -243,18 +256,19 @@ class CliIntegrationTests(unittest.TestCase):
     def test_workflow_mode_calls_workflow_and_stores_result(self):
         import cli
 
-        conn= cli.connect(":memory:")
+        conn = cli.connect(":memory:")
         self.addCleanup(conn.close)
 
         with mock.patch(
             "cli.workflow_response", return_value="Workflow completed."
-        )as workflow, mock.patch("builtins.print"):
+        ) as workflow, mock.patch("builtins.print"):
             cli.handle(conn, "Create a greeting.", 10, "api", "workflow")
 
         workflow.assert_called_once_with("Create a greeting.", "api")
-        rows= cli.fetch_context(conn, None)
+        rows = cli.fetch_context(conn, None)
         self.assertEqual(rows[-1][1], "Create a greeting.")
         self.assertEqual(rows[-1][3], "Workflow completed.")
+
 
 class McpServerTests(unittest.TestCase):
     def test_server_exposes_the_four_tools(self):
