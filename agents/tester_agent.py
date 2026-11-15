@@ -105,10 +105,20 @@ class TesterAgent:
 
         response = anthropic.Anthropic().messages.create(
             model=self.model,
-            max_tokens=1024,
+            max_tokens=4096,
             system=SYSTEM_PROMPT,
             messages=[{"role": "user", "content": prompt}],
         )
+
+        print(
+            f"[Tester API] stop_reason={response.stop_reason}; "
+            f"content_types={[block.type for block in response.content]}",
+            flush=True,
+        )
+        if response.stop_reason != "end_turn":
+            raise TesterError(
+                f"Tester evaluation did not finish: {response.stop_reason}"
+            )
 
         return "\n".join(
             block.text.strip()

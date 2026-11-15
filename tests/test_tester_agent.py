@@ -134,5 +134,18 @@ class TesterAgentTests(unittest.TestCase):
         self.assertTrue(result["test_result"])
         run_api.assert_called_once()
 
+    def test_truncated_api_response_raises_clear_error(self):
+        tester= TesterAgent(backend="api")
+
+        with mock.patch("anthropic.Anthropic") as client:
+            response= client.return_value.messages.create.return_value
+            response.stop_reason= "max_tokens"
+            response.content=[]
+
+            with self.assertRaisesRegex(
+                TesterError, "Tester evaluation did not finish: max_tokens"
+            ):
+                tester({"original_task": "Test the solution.", "code": "x=1"})
+
 if __name__ == "__main__":
     unittest.main()
